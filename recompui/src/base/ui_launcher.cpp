@@ -7,6 +7,7 @@
 #include "librecomp/game.hpp"
 #include "ultramodern/ultramodern.hpp"
 #include "nfd.h"
+#include <algorithm>
 #include <filesystem>
 #include "elements/ui_svg.h"
 #include "elements/ui_config_page.h"
@@ -133,6 +134,26 @@ namespace recompui {
             return mode_id;
         }
 
+        void update_layout(float scale) {
+            float option_height = Constants::option_height * scale;
+            float option_padding = Constants::option_padding * scale;
+            float option_height_inner = option_height - (option_padding * 2.0f);
+
+            set_height(option_height);
+            set_padding(option_padding);
+            thumbnail_image->set_width(option_height_inner);
+            thumbnail_image->set_height(option_height_inner);
+            thumbnail_image->set_min_width(option_height_inner);
+            thumbnail_image->set_min_height(option_height_inner);
+            body_container->set_margin_left(16.0f * scale);
+            body_container->set_padding_top(8.0f * scale);
+            body_container->set_padding_bottom(8.0f * scale);
+            body_container->set_height(option_height_inner);
+            body_container->set_max_height(option_height_inner);
+            name_label->set_font_size(std::clamp(40.0f * scale, 28.0f, 40.0f));
+            name_label->set_line_height(std::clamp(44.0f * scale, 30.0f, 44.0f));
+        }
+
         void instant_focus_and_scroll() {
             instant_scroll = true;
             focus();
@@ -142,7 +163,10 @@ namespace recompui {
     class GameModeMenu : public Element {
     protected:
         Element *wrapper = nullptr;
+        Element *header = nullptr;
+        Element *body_wrapper = nullptr;
         recompui::Element *body;
+        Element *footer = nullptr;
         std::vector<GameModeOption *> game_mode_options;
         //! Hack: Can't focus until a delayed update from when the options are cleared. Options get cleared then this is set to true.
         bool queue_make_options;
@@ -178,6 +202,7 @@ namespace recompui {
                             queue_update();
                         }
                     }
+                    update_layout();
                 }
                 break;
             case EventType::MenuAction: {
@@ -192,8 +217,23 @@ namespace recompui {
             }
         }
         std::string_view get_type_name() override { return "GameModeMenu"; }
+        void update_layout() {
+            float dp_to_pixel_ratio = get_dp_to_pixel_ratio();
+            float width_dp = get_client_width() / dp_to_pixel_ratio;
+            float height_dp = get_client_height() / dp_to_pixel_ratio;
+            float scale = std::clamp(std::min(width_dp / 1400.0f, height_dp / 900.0f), 0.72f, 1.0f);
+
+            wrapper->set_max_width(std::min(Constants::max_menu_width, std::max(width_dp - 32.0f, 0.0f)));
+            header->set_height(Constants::header_height * scale);
+            footer->set_height(Constants::footer_height * scale);
+            body_wrapper->set_max_height(std::max((height_dp - (Constants::header_height + Constants::footer_height) * scale) - 48.0f, 0.0f));
+
+            for (auto option : game_mode_options) {
+                option->update_layout(scale);
+            }
+        }
     public:
-        GameModeMenu(ResourceId rid, Element* parent) : Element(rid, parent, Events(EventType::MenuAction), "div", false) {
+        GameModeMenu(ResourceId rid, Element* parent) : Element(rid, parent, Events(EventType::MenuAction, EventType::Update), "div", false) {
             set_display(Display::Flex);
             set_align_items(AlignItems::Center);
             set_justify_content(JustifyContent::Center);
@@ -212,7 +252,7 @@ namespace recompui {
             wrapper->set_max_width(Constants::max_menu_width);
             wrapper->set_as_navigation_container(NavigationType::Vertical);
 
-            auto header = context.create_element<Element>(wrapper);
+            header = context.create_element<Element>(wrapper);
             header->set_display(Display::Flex);
             header->set_align_items(AlignItems::Center);
             header->set_justify_content(JustifyContent::Center);
@@ -220,7 +260,7 @@ namespace recompui {
             header->set_width(100.0f, Unit::Percent);
             header->set_gap(16.0f);
 
-            auto body_wrapper = context.create_element<Element>(wrapper);
+            body_wrapper = context.create_element<Element>(wrapper);
             body_wrapper->set_position(Position::Relative);
             body_wrapper->set_height_auto();
             body_wrapper->set_max_height(Constants::max_body_height);
@@ -233,7 +273,7 @@ namespace recompui {
             body->set_width(100.0f, Unit::Percent);
             body->set_as_navigation_container(NavigationType::Vertical);
 
-            auto footer = context.create_element<Element>(wrapper);
+            footer = context.create_element<Element>(wrapper);
             footer->set_display(Display::Flex);
             footer->set_justify_content(JustifyContent::SpaceBetween);
             footer->set_align_items(AlignItems::Center);
@@ -364,6 +404,7 @@ namespace recompui {
 
             //! Hack: Can't make options until next update otherwise focus doesn't work.
             queue_make_options = true;
+            update_layout();
             queue_update();
         }
     };
@@ -447,40 +488,54 @@ namespace recompui {
         return option;
     }
 
+    void GameOptionsMenu::activate_start_game_option_internal(GameOption* option) {
+        if (this->rom_valid) {
+            recompui::update_game_mod_id(this->mod_game_id);
+            if (recomp::mods::game_mode_count(this->mod_game_id, false) > 0) {
+                get_launcher_menu()->show_game_mode_menu(this->game_id, this->game_display_name, this->game_thumbnail);
+            } else {
+                recomp::start_game(this->game_id, {});
+                recompui::hide_all_contexts();
+            }
+        } else {
+            select_rom([this, option](bool success) {
+                if (success) {
+                    this->rom_valid = true;
+
+                    recompui::ContextId ui_context = recompui::get_launcher_context_id();
+                    bool opened = ui_context.open_if_not_already();
+                    option->set_title(this->start_game_title);
+                    if (opened) {
+                        ui_context.close();
+                    }
+                }
+            });
+        }
+    }
+
     GameOption *GameOptionsMenu::add_start_game_or_load_rom_option(const std::string& load_rom_title, const std::string& start_game_title) {
+        this->start_game_title = start_game_title;
         GameOption *option = add_option(rom_valid ? start_game_title : load_rom_title, nullptr);
         option->set_as_primary_focus(true);
 
         auto context = get_current_context();
         context.set_autofocus_element(option);
 
-        option->set_callback([this, option, start_game_title]() {
-            if (this->rom_valid) {
-                recompui::update_game_mod_id(this->mod_game_id);
-                if (recomp::mods::game_mode_count(this->mod_game_id, false) > 0) {
-                    get_launcher_menu()->show_game_mode_menu(this->game_id, this->game_display_name, this->game_thumbnail);
-                } else {
-                    recomp::start_game(this->game_id, {});
-                    recompui::hide_all_contexts();
-                }
-            } else {
-                select_rom([this, option, start_game_title](bool success) {
-                    if (success) {
-                        this->rom_valid = true;
-
-                        recompui::ContextId ui_context = recompui::get_launcher_context_id();
-                        bool opened = ui_context.open_if_not_already();
-                        option->set_title(start_game_title);
-                        if (opened) {
-                            ui_context.close();
-                        }
-                    }
-                });
-            }
+        option->set_callback([this, option]() {
+            activate_start_game_option_internal(option);
         });
 
         start_game_option = option;
         return option;
+    }
+
+    bool GameOptionsMenu::activate_start_game_option() {
+        if (start_game_option == nullptr) {
+            return false;
+        }
+
+        activate_start_game_option_internal(start_game_option);
+        return true;
     }
 
     GameOption *GameOptionsMenu::add_setup_controls_option(const std::string& title) {
@@ -608,6 +663,14 @@ namespace recompui {
         }
     }
 
+    bool LauncherMenu::activate_primary_option() {
+        if ((game_options_menu != nullptr) && game_options_menu->activate_start_game_option()) {
+            return true;
+        }
+
+        return false;
+    }
+
     static ContextId launcher_context;
     static LauncherMenu *launcher_menu = nullptr;
     static std::function<void(LauncherMenu *menu)> launcher_init_callback = nullptr;
@@ -655,4 +718,3 @@ namespace recompui {
         launcher_context.close();
     }
 }
-

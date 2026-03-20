@@ -15,14 +15,52 @@ namespace recompui {
         }
 
         static ultramodern::renderer::WindowMode wm_default() {
+#if defined(__ANDROID__)
+            return ultramodern::renderer::WindowMode::Fullscreen;
+#else
             return is_steam_deck() ? ultramodern::renderer::WindowMode::Fullscreen : ultramodern::renderer::WindowMode::Windowed;
+#endif
+        }
+
+        static ultramodern::renderer::Resolution resolution_default() {
+#if defined(__ANDROID__)
+            return ultramodern::renderer::Resolution::AutoFit;
+#else
+            return ultramodern::renderer::Resolution::Auto;
+#endif
+        }
+
+        static bool is_auto_resolution(ultramodern::renderer::Resolution res_option) {
+            return (res_option == ultramodern::renderer::Resolution::Auto)
+                || (res_option == ultramodern::renderer::Resolution::AutoFit);
+        }
+
+        static ultramodern::renderer::Antialiasing msaa_default() {
+#if defined(__ANDROID__)
+            return ultramodern::renderer::Antialiasing::None;
+#else
+            return ultramodern::renderer::Antialiasing::MSAA2X;
+#endif
+        }
+
+        static ultramodern::renderer::Antialiasing effective_msaa_option(
+            ultramodern::renderer::Resolution res_option,
+            ultramodern::renderer::Antialiasing msaa_option
+        ) {
+#if defined(__ANDROID__)
+            if (is_auto_resolution(res_option)) {
+                return ultramodern::renderer::Antialiasing::None;
+            }
+#endif
+            return msaa_option;
         }
 
         using EnumOptionVector = const std::vector<recomp::config::ConfigOptionEnumOption>;
         static EnumOptionVector resolution_options = {
             {ultramodern::renderer::Resolution::Original, "Original", "Original"},
             {ultramodern::renderer::Resolution::Original2x, "Original2x", "Original 2x"},
-            {ultramodern::renderer::Resolution::Auto, "Auto", "Auto"},
+            {ultramodern::renderer::Resolution::AutoFit, "AutoFit", "Auto (Fit)"},
+            {ultramodern::renderer::Resolution::Auto, "Auto", "Auto (Cover)"},
         };
 
         enum class DownsamplingOption {
@@ -37,14 +75,16 @@ namespace recompui {
         };
 
         static EnumOptionVector window_mode_options = {
+#if !defined(__ANDROID__)
             {ultramodern::renderer::WindowMode::Windowed, "Windowed"},
+#endif
             {ultramodern::renderer::WindowMode::Fullscreen, "Fullscreen"}
         };
 
         #if defined(_WIN32)
         #define ALLOW_D3D12
         #endif
-        #if defined(_WIN32) || defined(__linux__)
+        #if defined(_WIN32) || defined(__linux__) || defined(__ANDROID__)
         #define ALLOW_VULKAN
         #endif
         #if defined(__APPLE__)
@@ -96,10 +136,12 @@ namespace recompui {
         };
 
         static const std::string get_downsampling_details(ultramodern::renderer::Resolution res_option, DownsamplingOption ds_option) {
+            if (is_auto_resolution(res_option)) {
+                return "Downsampling is not available at auto resolution";
+            }
+
             switch (res_option) {
                 default:
-                case ultramodern::renderer::Resolution::Auto:
-                    return "Downsampling is not available at auto resolution";
                 case ultramodern::renderer::Resolution::Original:
                     if (ds_option == DownsamplingOption::X2) {
                         return "Rendered in 480p and scaled to 240p";
@@ -162,6 +204,21 @@ namespace recompui {
                 "<recomp-color primary>Detected display refresh rate: " + std::to_string(refresh_rate) + "hz</recomp-color>";
         }
 
+        static std::string get_msaa_text() {
+            std::string text =
+                "Sets the multisample anti-aliasing (MSAA) quality level. This reduces jagged edges in the final image at the expense of rendering performance."
+                "<br />"
+                "<br />"
+                "<recomp-color primary>Note: This option won't be available if your GPU does not support programmable MSAA sample positions, as it is currently required to avoid rendering glitches.</recomp-color>";
+#if defined(__ANDROID__)
+            text +=
+                "<br />"
+                "<br />"
+                "<recomp-color primary>On Android, MSAA is disabled while using Auto (Fit) or Auto (Cover), since those modes already render at high integer scales and additional MSAA costs a lot of performance.</recomp-color>";
+#endif
+            return text;
+        }
+
         static void apply_graphics_config() {
             ultramodern::renderer::GraphicsConfig new_config;
             new_config.developer_mode = get_graphics_bool_value(graphics::options::developer_mode);
@@ -170,7 +227,10 @@ namespace recompui {
             new_config.hr_option = get_graphics_enum_value<ultramodern::renderer::HUDRatioMode>(graphics::options::hr_option);
             new_config.api_option = get_graphics_enum_value<ultramodern::renderer::GraphicsApi>(graphics::options::api_option);
             new_config.ar_option = get_graphics_enum_value<ultramodern::renderer::AspectRatio>(graphics::options::ar_option);
-            new_config.msaa_option = get_graphics_enum_value<ultramodern::renderer::Antialiasing>(graphics::options::msaa_option);
+            new_config.msaa_option = effective_msaa_option(
+                new_config.res_option,
+                get_graphics_enum_value<ultramodern::renderer::Antialiasing>(graphics::options::msaa_option)
+            );
             new_config.rr_option = get_graphics_enum_value<ultramodern::renderer::RefreshRate>(graphics::options::rr_option);
             new_config.hpfb_option = get_graphics_enum_value<ultramodern::renderer::HighPrecisionFramebuffer>(graphics::options::hpfb_option);
             new_config.rr_manual_value = get_graphics_number_value<int>(graphics::options::rr_manual_value);
@@ -235,9 +295,9 @@ namespace recompui {
             config.add_enum_option(
                 graphics::options::res_option,
                 "Resolution",
-                "Sets the output resolution of the game. <recomp-color primary>Original</recomp-color> matches the game's original 240p resolution. <recomp-color primary>Original 2x</recomp-color> will render at 480p. <recomp-color primary>Auto</recomp-color> will scale based on the game window's resolution.",
+                "Sets the output resolution of the game. <recomp-color primary>Original</recomp-color> matches the game's original 240p resolution. <recomp-color primary>Original 2x</recomp-color> will render at 480p. <recomp-color primary>Auto (Fit)</recomp-color> picks the largest integer scale that fits inside the game window, while <recomp-color primary>Auto (Cover)</recomp-color> uses the window-covering integer scale.",
                 resolution_options,
-                ultramodern::renderer::Resolution::Auto
+                resolution_default()
             );
             {
                 config.add_option_change_callback(
@@ -271,7 +331,8 @@ namespace recompui {
                 config.add_option_disable_dependency(
                     graphics::options::ds_option,
                     graphics::options::res_option,
-                    ultramodern::renderer::Resolution::Auto
+                    ultramodern::renderer::Resolution::Auto,
+                    ultramodern::renderer::Resolution::AutoFit
                 );
     
                 config.on_json_parse_option(graphics::options::ds_option, [](const nlohmann::json& j) {
@@ -325,13 +386,20 @@ namespace recompui {
             config.add_enum_option(
                 graphics::options::msaa_option,
                 "MS Anti-Aliasing",
-                "Sets the multisample anti-aliasing (MSAA) quality level. This reduces jagged edges in the final image at the expense of rendering performance."
-                "<br />"
-                "<br />"
-                "<recomp-color primary>Note: This option won't be available if your GPU does not support programmable MSAA sample positions, as it is currently required to avoid rendering glitches.</recomp-color>",
+                get_msaa_text(),
                 antialiasing_options,
-                ultramodern::renderer::Antialiasing::MSAA2X
+                msaa_default()
             );
+            {
+#if defined(__ANDROID__)
+                config.add_option_disable_dependency(
+                    graphics::options::msaa_option,
+                    graphics::options::res_option,
+                    ultramodern::renderer::Resolution::Auto,
+                    ultramodern::renderer::Resolution::AutoFit
+                );
+#endif
+            }
 
             config.add_enum_option(
                 graphics::options::hr_option,

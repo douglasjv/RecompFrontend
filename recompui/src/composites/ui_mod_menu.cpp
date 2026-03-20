@@ -295,6 +295,9 @@ void ModMenu::open_mods_folder() {
 #elif defined(__linux__)
     std::string command = "xdg-open \"" + mods_directory.string() + "\" &";
     std::system(command.c_str());
+#elif defined(__ANDROID__)
+    std::string message = "Android builds do not have an in-app mods folder browser yet.\n\nCopy mods and texture packs into:\n" + mods_directory.string();
+    recompui::message_box(message.c_str());
 #elif defined(__APPLE__)
     std::string command = "open \"" + mods_directory.string() + "\"";
     std::system(command.c_str());

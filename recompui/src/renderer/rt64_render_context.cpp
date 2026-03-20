@@ -13,6 +13,7 @@
 #include "renderer.h"
 #include "recompui/recompui.h"
 #include "recompui/config.h"
+#include "util/file.h"
 #include "concurrentqueue.h"
 
 using namespace recompui;
@@ -140,11 +141,15 @@ RT64::EnhancementConfiguration::Presentation::Mode to_rt64(ultramodern::renderer
 
 void set_application_user_config(RT64::Application* application, const ultramodern::renderer::GraphicsConfig& config) {
     switch (config.res_option) {
-        default:
         case ultramodern::renderer::Resolution::Auto:
             application->userConfig.resolution = RT64::UserConfiguration::Resolution::WindowIntegerScale;
             application->userConfig.downsampleMultiplier = 1;
             break;
+        case ultramodern::renderer::Resolution::AutoFit:
+            application->userConfig.resolution = RT64::UserConfiguration::Resolution::WindowIntegerScaleFit;
+            application->userConfig.downsampleMultiplier = 1;
+            break;
+        default:
         case ultramodern::renderer::Resolution::Original:
             application->userConfig.resolution = RT64::UserConfiguration::Resolution::Manual;
             application->userConfig.resolutionMultiplier = std::max(config.ds_option, 1);
@@ -269,13 +274,23 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
     // Set up the RT64 application configuration fields.
     RT64::ApplicationConfiguration appConfig;
     appConfig.useConfigurationFile = false;
+#ifdef __ANDROID__
+    appConfig.detectDataPath = false;
+    appConfig.dataPath = recompui::file::get_app_folder_path() / "rt64";
+#endif
 
     // Create the RT64 application.
     app = std::make_unique<RT64::Application>(appCore, appConfig);
 
     // Set initial user config settings based on the current settings.
-    auto& cur_config = ultramodern::renderer::get_graphics_config();
+    auto cur_config = ultramodern::renderer::get_graphics_config();
     set_application_user_config(app.get(), cur_config);
+#ifdef __ANDROID__
+    app->userConfig.antialiasing = RT64::UserConfiguration::Antialiasing::None;
+    app->userConfig.aspectRatio = RT64::UserConfiguration::AspectRatio::Original;
+    app->userConfig.extAspectRatio = RT64::UserConfiguration::AspectRatio::Original;
+    app->userConfig.internalColorFormat = RT64::UserConfiguration::InternalColorFormat::Standard;
+#endif
     app->userConfig.developerMode = debug;
     // Force gbi depth branches to prevent LODs from kicking in.
     app->enhancementConfig.f3dex.forceBranch = true;
@@ -357,6 +372,20 @@ void renderer::RT64Context::send_dummy_workload(uint32_t fb_address) {
 
 void renderer::RT64Context::update_screen() {
     check_refresh_rate_changes();
+#ifdef __ANDROID__
+    ultramodern::renderer::VIBufferSnapshot vi_snapshot;
+    const RT64::VI current_vi = app->core.decodeVI();
+    if (ultramodern::renderer::copy_vi_buffer_snapshot(current_vi.fbAddress(), vi_snapshot)) {
+        std::scoped_lock lock(app->sharedQueueResources->androidVISnapshotMutex);
+        auto &shared_snapshot = app->sharedQueueResources->androidVISnapshot;
+        shared_snapshot.address = vi_snapshot.address;
+        shared_snapshot.width = vi_snapshot.width;
+        shared_snapshot.height = vi_snapshot.height;
+        shared_snapshot.siz = vi_snapshot.siz;
+        shared_snapshot.sequence = vi_snapshot.sequence;
+        shared_snapshot.bytes = vi_snapshot.bytes;
+    }
+#endif
     app->updateScreen();
 }
 
@@ -407,6 +436,13 @@ float renderer::RT64Context::get_resolution_scale() const {
         case RT64::UserConfiguration::Resolution::WindowIntegerScale:
             if (app->sharedQueueResources->swapChainHeight > 0) {
                 return std::max(float((app->sharedQueueResources->swapChainHeight + ReferenceHeight - 1) / ReferenceHeight), 1.0f);
+            }
+            else {
+                return 1.0f;
+            }
+        case RT64::UserConfiguration::Resolution::WindowIntegerScaleFit:
+            if (app->sharedQueueResources->swapChainHeight > 0) {
+                return std::max(float(app->sharedQueueResources->swapChainHeight / ReferenceHeight), 1.0f);
             }
             else {
                 return 1.0f;

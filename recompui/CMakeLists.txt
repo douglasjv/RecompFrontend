@@ -2,6 +2,27 @@ cmake_minimum_required(VERSION 3.20)
 
 project(recompui LANGUAGES C CXX)
 
+if (ANDROID)
+    include(FetchContent)
+
+    set(FT_DISABLE_ZLIB TRUE CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BZIP2 TRUE CACHE BOOL "" FORCE)
+    set(FT_DISABLE_PNG TRUE CACHE BOOL "" FORCE)
+    set(FT_DISABLE_HARFBUZZ TRUE CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BROTLI TRUE CACHE BOOL "" FORCE)
+    set(SKIP_INSTALL_ALL TRUE CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        freetype
+        URL https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz
+    )
+    FetchContent_MakeAvailable(freetype)
+
+    if (TARGET freetype AND NOT TARGET Freetype::Freetype)
+        add_library(Freetype::Freetype ALIAS freetype)
+    endif()
+endif()
+
 if (WIN32)
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/lib/")
 endif()
@@ -103,7 +124,7 @@ target_include_directories(recompui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include
 
 if (WIN32)
     target_include_directories(recompui PRIVATE ${sdl2_SOURCE_DIR}/include)
-elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux")
+elseif (APPLE OR ANDROID OR CMAKE_SYSTEM_NAME MATCHES "Linux")
     target_include_directories(recompui PRIVATE ${SDL2_INCLUDE_DIRS})
 endif()
 

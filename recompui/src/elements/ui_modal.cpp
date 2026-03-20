@@ -4,7 +4,30 @@
 #include "recompinput/recompinput.h"
 #include "recompinput/profiles.h"
 
+#include <algorithm>
+
 namespace recompui {
+
+namespace {
+    class ScopedContextOpen {
+    public:
+        explicit ScopedContextOpen(ContextId target_context) : target_context(target_context) {
+            previous_context = try_close_current_context();
+            target_context.open();
+        }
+
+        ~ScopedContextOpen() {
+            target_context.close();
+            if (previous_context != ContextId::null()) {
+                previous_context.open();
+            }
+        }
+
+    private:
+        ContextId target_context;
+        ContextId previous_context = ContextId::null();
+    };
+}
 
 class ModalOverlay : public Element {
 protected:
@@ -45,7 +68,7 @@ Modal::Modal(
     Document *parent,
     recompui::ContextId modal_root_context,
     ModalType modal_type
-) : Element(rid, parent, Events(EventType::MenuAction), "div", false)
+) : Element(rid, parent, Events(EventType::MenuAction, EventType::Update), "div", false)
 {
     this->modal_root_context = modal_root_context;
     this->modal_type = modal_type;
@@ -60,18 +83,18 @@ Modal::Modal(
 
     modal_overlay = context.create_element<ModalOverlay>(this);
 
-    Element* modal_whole_page_wrapper = context.create_element<Element>(modal_overlay);
-    modal_whole_page_wrapper->set_display(Display::Flex);
-    modal_whole_page_wrapper->set_position(Position::Absolute);
-    modal_whole_page_wrapper->set_top(0);
-    modal_whole_page_wrapper->set_right(0);
-    modal_whole_page_wrapper->set_bottom(0);
-    modal_whole_page_wrapper->set_left(0);
-    modal_whole_page_wrapper->set_padding(modal_page_padding);
-    modal_whole_page_wrapper->set_align_items(AlignItems::Center);
-    modal_whole_page_wrapper->set_justify_content(JustifyContent::Center);
+    page_wrapper = context.create_element<Element>(modal_overlay);
+    page_wrapper->set_display(Display::Flex);
+    page_wrapper->set_position(Position::Absolute);
+    page_wrapper->set_top(0);
+    page_wrapper->set_right(0);
+    page_wrapper->set_bottom(0);
+    page_wrapper->set_left(0);
+    page_wrapper->set_padding(modal_page_padding);
+    page_wrapper->set_align_items(AlignItems::Center);
+    page_wrapper->set_justify_content(JustifyContent::Center);
 
-    modal_element = context.create_element<Element>(modal_whole_page_wrapper);
+    modal_element = context.create_element<Element>(page_wrapper);
     modal_element->set_display(Display::Flex);
     modal_element->set_position(Position::Relative);
     modal_element->set_flex(1.0f, 1.0f);
@@ -113,19 +136,44 @@ Modal::Modal(
 Modal::~Modal() {
 }
 
+void Modal::update_layout() {
+    if (page_wrapper == nullptr || modal_element == nullptr) {
+        return;
+    }
+
+    float dp_to_pixel_ratio = modal_element->get_dp_to_pixel_ratio();
+    float viewport_width = get_client_width() / dp_to_pixel_ratio;
+    float viewport_height = get_client_height() / dp_to_pixel_ratio;
+    float padding = std::clamp(std::min(viewport_width, viewport_height) * 0.03f, 16.0f, modal_page_padding);
+    float max_width = std::min(modal_width, std::max(viewport_width - padding * 2.0f, 0.0f));
+    float max_height = std::min(modal_height, std::max(viewport_height - padding * 2.0f, 0.0f));
+    float radius = viewport_width < 960.0f ? theme::border::radius_md : theme::border::radius_lg;
+
+    page_wrapper->set_padding(padding);
+    modal_element->set_max_width(max_width);
+    modal_element->set_max_height(max_height);
+    modal_element->set_border_radius(radius);
+    header->set_border_top_left_radius(radius);
+    header->set_border_top_right_radius(radius);
+}
+
 void Modal::open() {
     if (!recompui::is_context_shown(modal_root_context)) {
         recompui::show_context(modal_root_context, "");
     }
 
+    ScopedContextOpen modal_context_guard(modal_root_context);
     is_open = true;
     set_display(Display::Block);
+    update_layout();
+    queue_update();
 }
 
 void TabbedModal::open() {
     Modal::open();
 
     if (tabs != nullptr) {
+        ScopedContextOpen modal_context_guard(modal_root_context);
         tabs->focus_on_active_tab();
         on_tab_change(tabs->get_active_tab());
     }
@@ -179,6 +227,7 @@ void Modal::process_event(const Event &e) {
     switch (e.type) {
         case EventType::Update: {
             if (is_open) {
+                update_layout();
                 bool update_action_labels = false;
                 auto [current_device, current_profile] = get_last_input_info();
                 if (current_device != last_input_device || current_profile != last_input_profile) {
@@ -220,7 +269,8 @@ void Modal::render_menu_actions() {
         MenuAction::Apply,
     };
 
-    ContextId context = get_current_context();
+    ScopedContextOpen modal_context_guard(modal_root_context);
+    ContextId context = modal_root_context;
     if (menu_actions_wrapper == nullptr) {
         menu_actions_wrapper = context.create_element<Element>(modal_overlay);
         menu_actions_wrapper->set_position(Position::Absolute);
@@ -320,6 +370,7 @@ TabbedModal::TabbedModal(
 {
     set_menu_action_callback(MenuAction::Back, [this]() {
         if (this->tabs != nullptr) {
+            ScopedContextOpen modal_context_guard(this->modal_root_context);
             this->tabs->focus_on_active_tab();
         }
     }, "Back");
@@ -361,8 +412,9 @@ void TabbedModal::navigate_tab_direction(int direction) {
     if (tab_contexts.size() == 0 || tabs == nullptr) {
         return;
     }
+    ScopedContextOpen modal_context_guard(modal_root_context);
     int next_index = tabs->get_next_tab_in_direction(tabs->get_active_tab(), direction);
-    set_selected_tab(next_index);
+    tabs->set_active_tab(next_index, true);
     // Only focus if the tab changed to the intended tab, otherwise the tab change was cancelled.
     if (current_tab_index == next_index) {
         tabs->focus_on_active_tab();
@@ -385,12 +437,14 @@ void TabbedModal::on_tab_change(int tab_index) {
 
 void TabbedModal::set_selected_tab(int tab_index) {
     if (tabs != nullptr) {
+        ScopedContextOpen modal_context_guard(modal_root_context);
         tabs->set_active_tab(tab_index, true);
     }
 }
 
 void TabbedModal::set_selected_tab(const std::string &id) {
     if (tabs != nullptr) {
+        ScopedContextOpen modal_context_guard(modal_root_context);
         for (int i = 0; i < tab_contexts.size(); i++) {
             if (tab_contexts[i].id == id) {
                 tabs->set_active_tab(i, true);

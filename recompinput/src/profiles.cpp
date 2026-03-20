@@ -405,6 +405,17 @@ namespace recompinput {
             check_joystick(profile_index_cont);
             recompinput::apply_joystick_deadzone(cur_x, cur_y, &cur_x, &cur_y);
             check_joystick(profile_index_kb);
+
+            for (size_t i = 0; i < n64_button_values.size(); i++) {
+                GameInput touch_input = static_cast<GameInput>(static_cast<size_t>(GameInput::N64_BUTTON_START) + i);
+                cur_buttons |= recompinput::get_touch_button(touch_input) ? n64_button_values[i] : 0;
+            }
+
+            float touch_x = 0.0f;
+            float touch_y = 0.0f;
+            recompinput::get_touch_stick(&touch_x, &touch_y);
+            cur_x += touch_x;
+            cur_y += touch_y;
         }
 
         *buttons_out = cur_buttons;

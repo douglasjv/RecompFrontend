@@ -147,6 +147,7 @@ public:
     float get_client_height();
     float get_dp_to_pixel_ratio();
     void enable_focus();
+    bool activate();
     bool focus();
     void blur();
     void queue_update();

@@ -13,6 +13,8 @@ namespace recompui {
         return file_path.extension() == ".dll";
 #elif defined(__linux__)
         return file_path.extension() == ".so" || file_path.filename().string().find(".so.") != std::string::npos;
+#elif defined(__ANDROID__)
+        return file_path.extension() == ".so";
 #elif defined(__APPLE__)
         return file_path.extension() == ".dylib";
 #else

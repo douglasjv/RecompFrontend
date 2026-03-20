@@ -1,10 +1,23 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#endif
+#if defined(_WIN32) || defined(__ANDROID__)
 #include <SDL_video.h>
 #else
 #include <SDL2/SDL_video.h>
 #endif
+#include <cinttypes>
 #include <chrono>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+#if defined(__ANDROID__) && defined(BANJO_ENABLE_ANDROID_TRACE_LOGS)
+#include <android/log.h>
+#define BANJO_ANDROID_UI_LOG(...) __android_log_print(ANDROID_LOG_INFO, "BanjoInput", __VA_ARGS__)
+#else
+#define BANJO_ANDROID_UI_LOG(...) ((void)0)
+#endif
 
 #include "rt64_render_hooks.h"
 
@@ -330,6 +343,61 @@ public:
         }
     }
 
+    bool focus_non_mouse_target(Rml::ElementDocument* current_document) {
+        if (current_document == nullptr) {
+            BANJO_ANDROID_UI_LOG("focus_non_mouse_target skipped: no document");
+            return false;
+        }
+
+        auto top_context = top_mouse_context();
+        if (top_context == recompui::ContextId::null()) {
+            BANJO_ANDROID_UI_LOG("focus_non_mouse_target skipped: no top context");
+            return false;
+        }
+
+        top_context.open();
+        auto focused_el = top_context.get_focused_element();
+        // Restore the launcher/config autofocus target before processing the first
+        // non-mouse activation so Android key events can immediately trigger it.
+        if (focused_el == nullptr || focused_el->is_focusable() != recompui::Element::CanFocus::Yes) {
+            auto recompui_doc = top_context.get_root_element();
+            auto last_hovered = recompui_doc->get_last_focusable_hovered_element();
+            if (last_hovered && last_hovered->is_focusable() == recompui::Element::CanFocus::Yes) {
+                const bool focused = last_hovered->focus();
+                BANJO_ANDROID_UI_LOG("focus_non_mouse_target using last hovered element success=%d", focused);
+                top_context.close();
+                return focused;
+            } else {
+                recompui::Element* autofocus_element = top_context.get_autofocus_element();
+                if (autofocus_element != nullptr) {
+                    const bool focused = autofocus_element->focus();
+                    BANJO_ANDROID_UI_LOG("focus_non_mouse_target using context autofocus element success=%d", focused);
+                    if (focused) {
+                        top_context.close();
+                        return true;
+                    }
+                }
+
+                Rml::Element* element = nullptr;
+                element = find_autofocus_element(current_document);
+                if (element != nullptr) {
+                    const bool focused = element->Focus();
+                    BANJO_ANDROID_UI_LOG("focus_non_mouse_target using document autofocus element success=%d", focused);
+                    top_context.close();
+                    return focused;
+                } else {
+                    BANJO_ANDROID_UI_LOG("focus_non_mouse_target found no focusable element");
+                }
+            }
+        } else {
+            BANJO_ANDROID_UI_LOG("focus_non_mouse_target keeping existing focus");
+            top_context.close();
+            return true;
+        }
+        top_context.close();
+        return false;
+    }
+
     void update_focus(bool mouse_moved, bool non_mouse_interacted) {
         Rml::ElementDocument* current_document = top_mouse_document();
 
@@ -339,24 +407,8 @@ public:
 
         // If non mouse input was used and nothing is focused then focus on the last hovered element or the autofocus element.
         if (cont_is_active || non_mouse_interacted) {
-            auto top_context = top_mouse_context();
-            if (non_mouse_interacted && top_context != recompui::ContextId::null()) {
-                top_context.open();
-                auto focused_el = top_context.get_focused_element();
-                // Check if not focused or focused element is not focusable.
-                if (focused_el == nullptr || focused_el->is_focusable() != recompui::Element::CanFocus::Yes) {
-                    auto recompui_doc = top_context.get_root_element();
-                    auto last_hovered = recompui_doc->get_last_focusable_hovered_element();
-                    if (last_hovered && last_hovered->is_focusable() == recompui::Element::CanFocus::Yes) {
-                        last_hovered->focus();
-                    } else {
-                        Rml::Element* element = find_autofocus_element(current_document);
-                        if (element != nullptr) {
-                            element->Focus();
-                        }
-                    }
-                }
-                top_context.close();
+            if (non_mouse_interacted) {
+                focus_non_mouse_target(current_document);
             }
             return;
         }
@@ -390,6 +442,11 @@ public:
 
         document->PullToFront();
         document->Show();
+
+#ifdef __ANDROID__
+        BANJO_ANDROID_UI_LOG("show_context slot=%" PRIu32 " captures_input=%d captures_mouse=%d shown_count=%zu",
+            context.slot_id, context.captures_input(), context.captures_mouse(), shown_contexts.size());
+#endif
 
         if (!mouse_is_active) {
             recompui::Element* default_element = context.get_autofocus_element();
@@ -427,6 +484,10 @@ public:
         shown_contexts.erase(remove_it, shown_contexts.end());
 
         context.get_document()->Hide();
+
+#ifdef __ANDROID__
+        BANJO_ANDROID_UI_LOG("hide_context slot=%" PRIu32 " shown_count=%zu", context.slot_id, shown_contexts.size());
+#endif
     }
     
     void hide_all_contexts() {
@@ -451,6 +512,21 @@ public:
 
     bool is_any_context_shown() {
         return !shown_contexts.empty();
+    }
+
+    std::string debug_describe_shown_contexts() {
+        std::ostringstream oss;
+        bool first = true;
+        for (auto& context_details : shown_contexts) {
+            if (!first) {
+                oss << ",";
+            }
+            first = false;
+            oss << context_details.context.slot_id
+                << ":i" << (context_details.context.captures_input() ? 1 : 0)
+                << ":m" << (context_details.context.captures_mouse() ? 1 : 0);
+        }
+        return oss.str();
     }
 
     Rml::ElementDocument* top_input_document() {
@@ -662,6 +738,19 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
 
     std::lock_guard lock{ ui_state_mutex };
 
+#ifdef __ANDROID__
+    static uint32_t logged_game_started_state = 0;
+    if (ultramodern::is_game_started() && (logged_game_started_state < 24)) {
+        auto* launcher_document = recompui::get_launcher_context_id().get_document();
+        BANJO_ANDROID_UI_LOG("draw_hook gameStarted anyContext=%d launcherShown=%d contexts=%s",
+            recompui::is_any_context_shown(),
+            recompui::is_context_shown(recompui::get_launcher_context_id()),
+            ui_state->debug_describe_shown_contexts().c_str());
+        BANJO_ANDROID_UI_LOG("draw_hook launcherDocVisible=%d", launcher_document != nullptr ? launcher_document->IsVisible() : -1);
+        logged_game_started_state++;
+    }
+#endif
+
     SDL_Event cur_event{};
 
     bool mouse_moved = false;
@@ -718,6 +807,8 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
             }
             // fallthrough
             case SDL_EventType::SDL_MOUSEBUTTONDOWN:
+                BANJO_ANDROID_UI_LOG("UI dequeue MOUSEBUTTONDOWN x=%d y=%d which=%" PRIu32 " captureMouse=%d",
+                    cur_event.button.x, cur_event.button.y, cur_event.button.which, context_capturing_mouse);
                 mouse_moved = true;
                 mouse_clicked = true;
                 is_mouse_input = true;
@@ -730,7 +821,25 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                 
             case SDL_EventType::SDL_CONTROLLERBUTTONDOWN: {
                 int sdl_key = cont_button_to_key(cur_event.cbutton);
+                BANJO_ANDROID_UI_LOG("UI dequeue CONTROLLERBUTTONDOWN button=%u mapped=%d captureInput=%d",
+                    cur_event.cbutton.button, sdl_key, context_capturing_input);
                 if (context_capturing_input && sdl_key) {
+                    bool focus_success = ui_state->focus_non_mouse_target(ui_state->top_mouse_document());
+                    if (!focus_success && sdl_key == SDLK_RETURN) {
+                        auto top_context = ui_state->top_mouse_context();
+                        if (top_context != recompui::ContextId::null()) {
+                            top_context.open();
+                            recompui::Element* target = top_context.get_focused_element();
+                            if (target == nullptr) {
+                                target = top_context.get_autofocus_element();
+                            }
+                            const bool activated = (target != nullptr) ? target->activate() : false;
+                            const bool launcher_activated = !activated && (top_context == recompui::get_launcher_context_id()) &&
+                                (recompui::get_launcher_menu() != nullptr) && recompui::get_launcher_menu()->activate_primary_option();
+                            BANJO_ANDROID_UI_LOG("UI controller accept fallback activation=%d launcherActivation=%d", activated, launcher_activated);
+                            top_context.close();
+                        }
+                    }
                     ui_state->context->ProcessKeyDown(convert_sdl_to_rml(sdl_key), 0);
                     latest_controller_key_pressed = sdl_key;
                     next_repeat_time = clock::now() + start_repeat_delay;
@@ -740,10 +849,30 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                 break;
             }
             case SDL_EventType::SDL_KEYDOWN:
+                BANJO_ANDROID_UI_LOG("UI dequeue KEYDOWN scancode=%d sym=%d captureInput=%d",
+                    cur_event.key.keysym.scancode, cur_event.key.keysym.sym, context_capturing_input);
                 // Exclude the ESC key from triggering keyboard mode.
                 if (cur_event.key.keysym.scancode != SDL_Scancode::SDL_SCANCODE_ESCAPE) {
                     non_mouse_interacted = true;
                     kb_interacted = true;
+                    if (context_capturing_input) {
+                        bool focus_success = ui_state->focus_non_mouse_target(ui_state->top_mouse_document());
+                        if (!focus_success && cur_event.key.keysym.scancode == SDL_Scancode::SDL_SCANCODE_RETURN) {
+                            auto top_context = ui_state->top_mouse_context();
+                            if (top_context != recompui::ContextId::null()) {
+                                top_context.open();
+                                recompui::Element* target = top_context.get_focused_element();
+                                if (target == nullptr) {
+                                    target = top_context.get_autofocus_element();
+                                }
+                                const bool activated = (target != nullptr) ? target->activate() : false;
+                                const bool launcher_activated = !activated && (top_context == recompui::get_launcher_context_id()) &&
+                                    (recompui::get_launcher_menu() != nullptr) && recompui::get_launcher_menu()->activate_primary_option();
+                                BANJO_ANDROID_UI_LOG("UI keyboard accept fallback activation=%d launcherActivation=%d", activated, launcher_activated);
+                                top_context.close();
+                            }
+                        }
+                    }
 
                     if (cur_event.key.keysym.scancode == SDL_Scancode::SDL_SCANCODE_F8) {
                         if (recompui::config::general::get_debug_mode_enabled()) {
@@ -775,7 +904,10 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                         *await_stick_return = true;
                         non_mouse_interacted = true;
                         int sdl_key = cont_axis_to_key(cur_event.caxis, axis_value);
+                        BANJO_ANDROID_UI_LOG("UI dequeue CONTROLLERAXIS axis=%u value=%0.3f mapped=%d captureInput=%d",
+                            axis_event->axis, axis_value, sdl_key, context_capturing_input);
                         if (context_capturing_input && sdl_key) {
+                            ui_state->focus_non_mouse_target(ui_state->top_mouse_document());
                             ui_state->context->ProcessKeyDown(convert_sdl_to_rml(sdl_key), 0);
                             latest_controller_key_pressed = sdl_key;
                             next_repeat_time = clock::now() + start_repeat_delay;

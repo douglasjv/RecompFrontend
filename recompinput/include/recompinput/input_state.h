@@ -38,12 +38,18 @@ namespace recompinput {
     void get_gyro_deltas(int controller_num, float* x, float* y);
     void get_mouse_deltas(float* x, float* y);
     void get_right_analog(int controller_num, float* x, float* y);
+    void set_touch_stick(float x, float y);
+    void get_touch_stick(float* x, float* y);
+    void set_touch_button(GameInput input, bool pressed);
+    bool get_touch_button(GameInput input);
+    void clear_touch_input();
     void apply_joystick_deadzone(float x_in, float y_in, float* x_out, float* y_out);
     void set_right_analog_suppressed(bool suppressed);
     bool game_input_disabled();
     bool all_input_disabled();
     ControllerState &get_controller_state(SDL_JoystickID joystick_id);
     SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
+    bool has_connected_controllers();
     void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
     void remove_controller_state(SDL_JoystickID joystick_id);
     void add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y);

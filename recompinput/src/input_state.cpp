@@ -22,6 +22,9 @@ static struct {
     std::mutex controllers_mutex;
     std::vector<SDL_GameController*> detected_controllers{};
     std::unordered_map<SDL_JoystickID, ControllerState> controller_states;
+    std::mutex touch_input_mutex;
+    std::array<bool, num_game_inputs> touch_buttons{};
+    std::array<float, 2> touch_stick{};
 
     std::array<float, 2> mouse_delta{};
     std::mutex pending_input_mutex;
@@ -313,6 +316,44 @@ void recompinput::get_mouse_deltas(float* x, float* y) {
     *y = cur_mouse_delta[1] * sensitivity;
 }
 
+void recompinput::set_touch_stick(float x, float y) {
+    std::lock_guard lock{ InputState.touch_input_mutex };
+    InputState.touch_stick[0] = std::clamp(x, -1.0f, 1.0f);
+    InputState.touch_stick[1] = std::clamp(y, -1.0f, 1.0f);
+}
+
+void recompinput::get_touch_stick(float* x, float* y) {
+    std::lock_guard lock{ InputState.touch_input_mutex };
+    *x = InputState.touch_stick[0];
+    *y = InputState.touch_stick[1];
+}
+
+void recompinput::set_touch_button(GameInput input, bool pressed) {
+    size_t input_index = static_cast<size_t>(input);
+    if (input_index >= InputState.touch_buttons.size()) {
+        return;
+    }
+
+    std::lock_guard lock{ InputState.touch_input_mutex };
+    InputState.touch_buttons[input_index] = pressed;
+}
+
+bool recompinput::get_touch_button(GameInput input) {
+    size_t input_index = static_cast<size_t>(input);
+    if (input_index >= InputState.touch_buttons.size()) {
+        return false;
+    }
+
+    std::lock_guard lock{ InputState.touch_input_mutex };
+    return InputState.touch_buttons[input_index];
+}
+
+void recompinput::clear_touch_input() {
+    std::lock_guard lock{ InputState.touch_input_mutex };
+    InputState.touch_buttons.fill(false);
+    InputState.touch_stick = { 0.0f, 0.0f };
+}
+
 void recompinput::apply_joystick_deadzone(float x_in, float y_in, float* x_out, float* y_out) {
     float joystick_deadzone = (float)recompui::config::general::get_joystick_deadzone() / 100.0f;
 
@@ -386,6 +427,18 @@ SDL_GameController *recompinput::get_controller_from_joystick_id(SDL_JoystickID 
         return it->second.controller;
     }
     return nullptr;
+}
+
+bool recompinput::has_connected_controllers() {
+    std::lock_guard lock{ InputState.controllers_mutex };
+    for (const auto& [joystick_id, state] : InputState.controller_states) {
+        (void)joystick_id;
+        if (state.controller != nullptr) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller) {

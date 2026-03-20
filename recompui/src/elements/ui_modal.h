@@ -62,6 +62,7 @@ namespace recompui {
         friend class TabbedModal;
     protected:
         bool is_open = false;
+        Element *page_wrapper = nullptr;
         Element *modal_element = nullptr;
         ConfigHeaderFooter *header = nullptr;
         Element *modal_overlay = nullptr;
@@ -74,6 +75,7 @@ namespace recompui {
         recompinput::InputDevice last_input_device = recompinput::InputDevice::COUNT;
         int last_input_profile = -1;
 
+        void update_layout();
         virtual void process_event(const Event &e) override;
         std::string_view get_type_name() override { return "Modal"; }
 

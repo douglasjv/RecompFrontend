@@ -14,6 +14,7 @@ namespace recompui {
     class GameOptionsMenu : public Element {
     private:
         void select_rom(std::function<void(bool)> callback);
+        void activate_start_game_option_internal(GameOption* option);
     protected:
         std::vector<GameOption *> options;
         GameOption *start_game_option = nullptr;
@@ -21,6 +22,7 @@ namespace recompui {
         std::string mod_game_id;
         std::string game_display_name;
         std::span<const char> game_thumbnail;
+        std::string start_game_title = "Start Game";
         bool rom_valid = false;
         GameOptionsMenuLayout layout;
 
@@ -37,6 +39,7 @@ namespace recompui {
         GameOption *add_exit_option(const std::string& title = "Exit");
 
         GameOption *get_start_game_option() { return start_game_option; }
+        bool activate_start_game_option();
     
         void add_default_options() {
             add_start_game_or_load_rom_option();
@@ -69,6 +72,7 @@ namespace recompui {
         GameModeMenu *get_game_mode_menu() { return game_mode_menu; }
         void show_game_mode_menu(std::u8string game_id, std::string game_display_name, std::span<const char> game_thumbnail);
         void hide_game_mode_menu();
+        bool activate_primary_option();
         void remove_default_title();
         Svg *set_launcher_background_svg(const std::string& svg_path);
         Element *get_background_container() { return background_wrapper; }

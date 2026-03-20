@@ -1,9 +1,19 @@
+#include <cinttypes>
+
 #include "recompinput/recompinput.h"
 #include "recompinput/input_binding.h"
 #include "recompinput/input_events.h"
 #include "recompinput/profiles.h"
 #include "recompui/config.h"
+#include "util/file.h"
 #include "ultramodern/ultramodern.hpp"
+
+#if defined(__ANDROID__) && defined(BANJO_ENABLE_ANDROID_TRACE_LOGS)
+#include <android/log.h>
+#define BANJO_ANDROID_INPUT_LOG(...) __android_log_print(ANDROID_LOG_INFO, "BanjoInput", __VA_ARGS__)
+#else
+#define BANJO_ANDROID_INPUT_LOG(...) ((void)0)
+#endif
 
 static struct {
     std::list<std::filesystem::path> files_dropped;
@@ -19,6 +29,24 @@ void queue_if_enabled(SDL_Event* event) {
 
 // Controllers plugged in while in single player mode will create profiles after switching to multiplayer.
 static std::unordered_map<uint64_t, ControllerGUID> deferred_controller_profiles;
+
+#ifdef __ANDROID__
+static bool suppress_touch_mouse_event(const SDL_Event* event) {
+    if (!ultramodern::is_game_started() || recompui::is_context_capturing_input()) {
+        return false;
+    }
+
+    switch (event->type) {
+    case SDL_EventType::SDL_MOUSEMOTION:
+        return event->motion.which == SDL_TOUCH_MOUSEID;
+    case SDL_EventType::SDL_MOUSEBUTTONDOWN:
+    case SDL_EventType::SDL_MOUSEBUTTONUP:
+        return event->button.which == SDL_TOUCH_MOUSEID;
+    default:
+        return false;
+    }
+}
+#endif
 
 static int get_or_create_controller_profile_index(ControllerGUID guid) {
     std::string default_profile_key = profiles::get_string_from_controller_guid(guid);
@@ -43,6 +71,8 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     case SDL_EventType::SDL_KEYDOWN:
     {
         SDL_KeyboardEvent* keyevent = &event->key;
+        BANJO_ANDROID_INPUT_LOG("Filter KEYDOWN scancode=%d sym=%d repeat=%d capturesInput=%d",
+            keyevent->keysym.scancode, keyevent->keysym.sym, keyevent->repeat, recompui::is_context_capturing_input());
 
         // Skip repeated events when not in the menu
         if (!recompui::is_context_capturing_input() &&
@@ -121,7 +151,22 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     }
     queue_if_enabled(event);
     break;
+    case SDL_EventType::SDL_MOUSEBUTTONDOWN:
+    case SDL_EventType::SDL_MOUSEBUTTONUP:
+#ifdef __ANDROID__
+        BANJO_ANDROID_INPUT_LOG("Filter MOUSEBUTTON type=%u button=%u state=%u x=%d y=%d which=%" PRIu32,
+            event->type, event->button.button, event->button.state, event->button.x, event->button.y, event->button.which);
+        if (suppress_touch_mouse_event(event)) {
+            break;
+        }
+#endif
+        queue_if_enabled(event);
+        break;
     case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
+#ifdef __ANDROID__
+        BANJO_ANDROID_INPUT_LOG("Filter CONTROLLERBUTTONDOWN which=%" PRIu32 " button=%u",
+            event->cbutton.which, event->cbutton.button);
+#endif
         if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
             // TODO: Needs the controller profile index.
             auto menuToggleBinding0 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 0);
@@ -218,10 +263,25 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         }
         break;
     case SDL_EventType::SDL_MOUSEMOTION:
+#ifdef __ANDROID__
+        BANJO_ANDROID_INPUT_LOG("Filter MOUSEMOTION x=%d y=%d xrel=%d yrel=%d which=%" PRIu32,
+            event->motion.x, event->motion.y, event->motion.xrel, event->motion.yrel, event->motion.which);
+        if (suppress_touch_mouse_event(event)) {
+            break;
+        }
+#endif
         if (!recompinput::game_input_disabled()) {
             SDL_MouseMotionEvent* motion_event = &event->motion;
             recompinput::add_mouse_deltas(motion_event->xrel, motion_event->yrel);
         }
+        queue_if_enabled(event);
+        break;
+    case SDL_EventType::SDL_FINGERDOWN:
+    case SDL_EventType::SDL_FINGERMOTION:
+    case SDL_EventType::SDL_FINGERUP:
+        BANJO_ANDROID_INPUT_LOG("Filter FINGER type=%u finger=%" PRIu64 " x=%0.3f y=%0.3f dx=%0.3f dy=%0.3f",
+            event->type, static_cast<uint64_t>(event->tfinger.fingerId), event->tfinger.x, event->tfinger.y,
+            event->tfinger.dx, event->tfinger.dy);
         queue_if_enabled(event);
         break;
     case SDL_EventType::SDL_DROPBEGIN:
@@ -247,6 +307,8 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
 }
 
 void handle_events() {
+    recompui::file::poll_async_results();
+
     SDL_Event cur_event;
     static bool started = false;
     static bool exited = false;

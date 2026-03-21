@@ -328,6 +328,20 @@ void recompinput::get_touch_stick(float* x, float* y) {
     *y = InputState.touch_stick[1];
 }
 
+void recompinput::set_touch_input_state(const std::array<bool, num_game_inputs>& buttons, float x, float y) {
+    std::lock_guard lock{ InputState.touch_input_mutex };
+    InputState.touch_buttons = buttons;
+    InputState.touch_stick[0] = std::clamp(x, -1.0f, 1.0f);
+    InputState.touch_stick[1] = std::clamp(y, -1.0f, 1.0f);
+}
+
+void recompinput::get_touch_input_state(std::array<bool, num_game_inputs>& buttons, float* x, float* y) {
+    std::lock_guard lock{ InputState.touch_input_mutex };
+    buttons = InputState.touch_buttons;
+    *x = InputState.touch_stick[0];
+    *y = InputState.touch_stick[1];
+}
+
 void recompinput::set_touch_button(GameInput input, bool pressed) {
     size_t input_index = static_cast<size_t>(input);
     if (input_index >= InputState.touch_buttons.size()) {

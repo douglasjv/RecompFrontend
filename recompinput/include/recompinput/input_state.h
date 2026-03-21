@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <span>
 
 // disable warning: '/*' within block comment [-Wcomment] for GamepadMotion.hpp
@@ -40,6 +41,8 @@ namespace recompinput {
     void get_right_analog(int controller_num, float* x, float* y);
     void set_touch_stick(float x, float y);
     void get_touch_stick(float* x, float* y);
+    void set_touch_input_state(const std::array<bool, num_game_inputs>& buttons, float x, float y);
+    void get_touch_input_state(std::array<bool, num_game_inputs>& buttons, float* x, float* y);
     void set_touch_button(GameInput input, bool pressed);
     bool get_touch_button(GameInput input);
     void clear_touch_input();

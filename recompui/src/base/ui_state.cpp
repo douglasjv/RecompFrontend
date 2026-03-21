@@ -12,11 +12,11 @@
 #include <sstream>
 #include <string>
 
-#if defined(__ANDROID__) && defined(BANJO_ENABLE_ANDROID_TRACE_LOGS)
+#if defined(__ANDROID__) && defined(RECOMP_ENABLE_ANDROID_TRACE_LOGS)
 #include <android/log.h>
-#define BANJO_ANDROID_UI_LOG(...) __android_log_print(ANDROID_LOG_INFO, "BanjoInput", __VA_ARGS__)
+#define RECOMPUI_ANDROID_LOG(...) __android_log_print(ANDROID_LOG_INFO, "RecompUI", __VA_ARGS__)
 #else
-#define BANJO_ANDROID_UI_LOG(...) ((void)0)
+#define RECOMPUI_ANDROID_LOG(...) ((void)0)
 #endif
 
 #include "rt64_render_hooks.h"
@@ -345,13 +345,13 @@ public:
 
     bool focus_non_mouse_target(Rml::ElementDocument* current_document) {
         if (current_document == nullptr) {
-            BANJO_ANDROID_UI_LOG("focus_non_mouse_target skipped: no document");
+            RECOMPUI_ANDROID_LOG("focus_non_mouse_target skipped: no document");
             return false;
         }
 
         auto top_context = top_mouse_context();
         if (top_context == recompui::ContextId::null()) {
-            BANJO_ANDROID_UI_LOG("focus_non_mouse_target skipped: no top context");
+            RECOMPUI_ANDROID_LOG("focus_non_mouse_target skipped: no top context");
             return false;
         }
 
@@ -364,14 +364,14 @@ public:
             auto last_hovered = recompui_doc->get_last_focusable_hovered_element();
             if (last_hovered && last_hovered->is_focusable() == recompui::Element::CanFocus::Yes) {
                 const bool focused = last_hovered->focus();
-                BANJO_ANDROID_UI_LOG("focus_non_mouse_target using last hovered element success=%d", focused);
+                RECOMPUI_ANDROID_LOG("focus_non_mouse_target using last hovered element success=%d", focused);
                 top_context.close();
                 return focused;
             } else {
                 recompui::Element* autofocus_element = top_context.get_autofocus_element();
                 if (autofocus_element != nullptr) {
                     const bool focused = autofocus_element->focus();
-                    BANJO_ANDROID_UI_LOG("focus_non_mouse_target using context autofocus element success=%d", focused);
+                    RECOMPUI_ANDROID_LOG("focus_non_mouse_target using context autofocus element success=%d", focused);
                     if (focused) {
                         top_context.close();
                         return true;
@@ -382,15 +382,15 @@ public:
                 element = find_autofocus_element(current_document);
                 if (element != nullptr) {
                     const bool focused = element->Focus();
-                    BANJO_ANDROID_UI_LOG("focus_non_mouse_target using document autofocus element success=%d", focused);
+                    RECOMPUI_ANDROID_LOG("focus_non_mouse_target using document autofocus element success=%d", focused);
                     top_context.close();
                     return focused;
                 } else {
-                    BANJO_ANDROID_UI_LOG("focus_non_mouse_target found no focusable element");
+                    RECOMPUI_ANDROID_LOG("focus_non_mouse_target found no focusable element");
                 }
             }
         } else {
-            BANJO_ANDROID_UI_LOG("focus_non_mouse_target keeping existing focus");
+            RECOMPUI_ANDROID_LOG("focus_non_mouse_target keeping existing focus");
             top_context.close();
             return true;
         }
@@ -444,7 +444,7 @@ public:
         document->Show();
 
 #ifdef __ANDROID__
-        BANJO_ANDROID_UI_LOG("show_context slot=%" PRIu32 " captures_input=%d captures_mouse=%d shown_count=%zu",
+        RECOMPUI_ANDROID_LOG("show_context slot=%" PRIu32 " captures_input=%d captures_mouse=%d shown_count=%zu",
             context.slot_id, context.captures_input(), context.captures_mouse(), shown_contexts.size());
 #endif
 
@@ -486,7 +486,7 @@ public:
         context.get_document()->Hide();
 
 #ifdef __ANDROID__
-        BANJO_ANDROID_UI_LOG("hide_context slot=%" PRIu32 " shown_count=%zu", context.slot_id, shown_contexts.size());
+        RECOMPUI_ANDROID_LOG("hide_context slot=%" PRIu32 " shown_count=%zu", context.slot_id, shown_contexts.size());
 #endif
     }
     
@@ -742,11 +742,11 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
     static uint32_t logged_game_started_state = 0;
     if (ultramodern::is_game_started() && (logged_game_started_state < 24)) {
         auto* launcher_document = recompui::get_launcher_context_id().get_document();
-        BANJO_ANDROID_UI_LOG("draw_hook gameStarted anyContext=%d launcherShown=%d contexts=%s",
+        RECOMPUI_ANDROID_LOG("draw_hook gameStarted anyContext=%d launcherShown=%d contexts=%s",
             recompui::is_any_context_shown(),
             recompui::is_context_shown(recompui::get_launcher_context_id()),
             ui_state->debug_describe_shown_contexts().c_str());
-        BANJO_ANDROID_UI_LOG("draw_hook launcherDocVisible=%d", launcher_document != nullptr ? launcher_document->IsVisible() : -1);
+        RECOMPUI_ANDROID_LOG("draw_hook launcherDocVisible=%d", launcher_document != nullptr ? launcher_document->IsVisible() : -1);
         logged_game_started_state++;
     }
 #endif
@@ -807,7 +807,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
             }
             // fallthrough
             case SDL_EventType::SDL_MOUSEBUTTONDOWN:
-                BANJO_ANDROID_UI_LOG("UI dequeue MOUSEBUTTONDOWN x=%d y=%d which=%" PRIu32 " captureMouse=%d",
+                RECOMPUI_ANDROID_LOG("UI dequeue MOUSEBUTTONDOWN x=%d y=%d which=%" PRIu32 " captureMouse=%d",
                     cur_event.button.x, cur_event.button.y, cur_event.button.which, context_capturing_mouse);
                 mouse_moved = true;
                 mouse_clicked = true;
@@ -821,7 +821,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                 
             case SDL_EventType::SDL_CONTROLLERBUTTONDOWN: {
                 int sdl_key = cont_button_to_key(cur_event.cbutton);
-                BANJO_ANDROID_UI_LOG("UI dequeue CONTROLLERBUTTONDOWN button=%u mapped=%d captureInput=%d",
+                RECOMPUI_ANDROID_LOG("UI dequeue CONTROLLERBUTTONDOWN button=%u mapped=%d captureInput=%d",
                     cur_event.cbutton.button, sdl_key, context_capturing_input);
                 if (context_capturing_input && sdl_key) {
                     bool focus_success = ui_state->focus_non_mouse_target(ui_state->top_mouse_document());
@@ -836,7 +836,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                             const bool activated = (target != nullptr) ? target->activate() : false;
                             const bool launcher_activated = !activated && (top_context == recompui::get_launcher_context_id()) &&
                                 (recompui::get_launcher_menu() != nullptr) && recompui::get_launcher_menu()->activate_primary_option();
-                            BANJO_ANDROID_UI_LOG("UI controller accept fallback activation=%d launcherActivation=%d", activated, launcher_activated);
+                            RECOMPUI_ANDROID_LOG("UI controller accept fallback activation=%d launcherActivation=%d", activated, launcher_activated);
                             top_context.close();
                         }
                     }
@@ -849,7 +849,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                 break;
             }
             case SDL_EventType::SDL_KEYDOWN:
-                BANJO_ANDROID_UI_LOG("UI dequeue KEYDOWN scancode=%d sym=%d captureInput=%d",
+                RECOMPUI_ANDROID_LOG("UI dequeue KEYDOWN scancode=%d sym=%d captureInput=%d",
                     cur_event.key.keysym.scancode, cur_event.key.keysym.sym, context_capturing_input);
                 // Exclude the ESC key from triggering keyboard mode.
                 if (cur_event.key.keysym.scancode != SDL_Scancode::SDL_SCANCODE_ESCAPE) {
@@ -868,7 +868,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                                 const bool activated = (target != nullptr) ? target->activate() : false;
                                 const bool launcher_activated = !activated && (top_context == recompui::get_launcher_context_id()) &&
                                     (recompui::get_launcher_menu() != nullptr) && recompui::get_launcher_menu()->activate_primary_option();
-                                BANJO_ANDROID_UI_LOG("UI keyboard accept fallback activation=%d launcherActivation=%d", activated, launcher_activated);
+                                RECOMPUI_ANDROID_LOG("UI keyboard accept fallback activation=%d launcherActivation=%d", activated, launcher_activated);
                                 top_context.close();
                             }
                         }
@@ -904,7 +904,7 @@ void draw_hook(plume::RenderCommandList* command_list, plume::RenderFramebuffer*
                         *await_stick_return = true;
                         non_mouse_interacted = true;
                         int sdl_key = cont_axis_to_key(cur_event.caxis, axis_value);
-                        BANJO_ANDROID_UI_LOG("UI dequeue CONTROLLERAXIS axis=%u value=%0.3f mapped=%d captureInput=%d",
+                        RECOMPUI_ANDROID_LOG("UI dequeue CONTROLLERAXIS axis=%u value=%0.3f mapped=%d captureInput=%d",
                             axis_event->axis, axis_value, sdl_key, context_capturing_input);
                         if (context_capturing_input && sdl_key) {
                             ui_state->focus_non_mouse_target(ui_state->top_mouse_document());

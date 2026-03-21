@@ -8,11 +8,11 @@
 #include "util/file.h"
 #include "ultramodern/ultramodern.hpp"
 
-#if defined(__ANDROID__) && defined(BANJO_ENABLE_ANDROID_TRACE_LOGS)
+#if defined(__ANDROID__) && defined(RECOMP_ENABLE_ANDROID_TRACE_LOGS)
 #include <android/log.h>
-#define BANJO_ANDROID_INPUT_LOG(...) __android_log_print(ANDROID_LOG_INFO, "BanjoInput", __VA_ARGS__)
+#define RECOMPINPUT_ANDROID_LOG(...) __android_log_print(ANDROID_LOG_INFO, "RecompInput", __VA_ARGS__)
 #else
-#define BANJO_ANDROID_INPUT_LOG(...) ((void)0)
+#define RECOMPINPUT_ANDROID_LOG(...) ((void)0)
 #endif
 
 static struct {
@@ -71,7 +71,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     case SDL_EventType::SDL_KEYDOWN:
     {
         SDL_KeyboardEvent* keyevent = &event->key;
-        BANJO_ANDROID_INPUT_LOG("Filter KEYDOWN scancode=%d sym=%d repeat=%d capturesInput=%d",
+        RECOMPINPUT_ANDROID_LOG("Filter KEYDOWN scancode=%d sym=%d repeat=%d capturesInput=%d",
             keyevent->keysym.scancode, keyevent->keysym.sym, keyevent->repeat, recompui::is_context_capturing_input());
 
         // Skip repeated events when not in the menu
@@ -154,7 +154,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     case SDL_EventType::SDL_MOUSEBUTTONDOWN:
     case SDL_EventType::SDL_MOUSEBUTTONUP:
 #ifdef __ANDROID__
-        BANJO_ANDROID_INPUT_LOG("Filter MOUSEBUTTON type=%u button=%u state=%u x=%d y=%d which=%" PRIu32,
+        RECOMPINPUT_ANDROID_LOG("Filter MOUSEBUTTON type=%u button=%u state=%u x=%d y=%d which=%" PRIu32,
             event->type, event->button.button, event->button.state, event->button.x, event->button.y, event->button.which);
         if (suppress_touch_mouse_event(event)) {
             break;
@@ -164,7 +164,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         break;
     case SDL_EventType::SDL_CONTROLLERBUTTONDOWN:
 #ifdef __ANDROID__
-        BANJO_ANDROID_INPUT_LOG("Filter CONTROLLERBUTTONDOWN which=%" PRIu32 " button=%u",
+        RECOMPINPUT_ANDROID_LOG("Filter CONTROLLERBUTTONDOWN which=%" PRIu32 " button=%u",
             event->cbutton.which, event->cbutton.button);
 #endif
         if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
@@ -264,7 +264,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         break;
     case SDL_EventType::SDL_MOUSEMOTION:
 #ifdef __ANDROID__
-        BANJO_ANDROID_INPUT_LOG("Filter MOUSEMOTION x=%d y=%d xrel=%d yrel=%d which=%" PRIu32,
+        RECOMPINPUT_ANDROID_LOG("Filter MOUSEMOTION x=%d y=%d xrel=%d yrel=%d which=%" PRIu32,
             event->motion.x, event->motion.y, event->motion.xrel, event->motion.yrel, event->motion.which);
         if (suppress_touch_mouse_event(event)) {
             break;
@@ -279,7 +279,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
     case SDL_EventType::SDL_FINGERDOWN:
     case SDL_EventType::SDL_FINGERMOTION:
     case SDL_EventType::SDL_FINGERUP:
-        BANJO_ANDROID_INPUT_LOG("Filter FINGER type=%u finger=%" PRIu64 " x=%0.3f y=%0.3f dx=%0.3f dy=%0.3f",
+        RECOMPINPUT_ANDROID_LOG("Filter FINGER type=%u finger=%" PRIu64 " x=%0.3f y=%0.3f dx=%0.3f dy=%0.3f",
             event->type, static_cast<uint64_t>(event->tfinger.fingerId), event->tfinger.x, event->tfinger.y,
             event->tfinger.dx, event->tfinger.dy);
         queue_if_enabled(event);

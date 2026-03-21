@@ -1,10 +1,10 @@
 #include "RmlUi/Core/StringUtilities.h"
 
-#if defined(__ANDROID__) && defined(BANJO_ENABLE_ANDROID_TRACE_LOGS)
+#if defined(__ANDROID__) && defined(RECOMP_ENABLE_ANDROID_TRACE_LOGS)
 #include <android/log.h>
-#define BANJO_ANDROID_UI_LOG(...) __android_log_print(ANDROID_LOG_INFO, "BanjoInput", __VA_ARGS__)
+#define RECOMPUI_ANDROID_LOG(...) __android_log_print(ANDROID_LOG_INFO, "RecompUI", __VA_ARGS__)
 #else
-#define BANJO_ANDROID_UI_LOG(...) ((void)0)
+#define RECOMPUI_ANDROID_LOG(...) ((void)0)
 #endif
 
 #include "overloaded.h"
@@ -242,7 +242,7 @@ void Element::ProcessEvent(Rml::Event &event) {
         break;
     case Rml::EventId::Keydown: {
         auto rml_key = (Rml::Input::KeyIdentifier)event.GetParameter<int>("key_identifier", 0);
-        BANJO_ANDROID_UI_LOG("Element keydown tag=%s debug=%s key=%d phase=%d click=%d menu=%d",
+        RECOMPUI_ANDROID_LOG("Element keydown tag=%s debug=%s key=%d phase=%d click=%d menu=%d",
             base->GetTagName().c_str(), get_debug_id_or_id().c_str(), int(rml_key), int(event.GetPhase()),
             (events_enabled & Events(EventType::Click)) != 0, (events_enabled & Events(EventType::MenuAction)) != 0);
         if (events_enabled & Events(EventType::Navigate)) {
@@ -278,7 +278,7 @@ void Element::ProcessEvent(Rml::Event &event) {
             (events_enabled & Events(EventType::Click)) &&
             (menu_action_mapping::menu_action_from_rml_key(rml_key) == MenuAction::Accept) &&
             is_enabled()) {
-            BANJO_ANDROID_UI_LOG("Element synthesized click tag=%s debug=%s",
+            RECOMPUI_ANDROID_LOG("Element synthesized click tag=%s debug=%s",
                 base->GetTagName().c_str(), get_debug_id_or_id().c_str());
             handle_event(Event::click_event(0.0f, 0.0f));
         }

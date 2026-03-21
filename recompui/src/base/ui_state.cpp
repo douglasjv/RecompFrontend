@@ -6,6 +6,7 @@
 #else
 #include <SDL2/SDL_video.h>
 #endif
+#include <atomic>
 #include <cinttypes>
 #include <chrono>
 #include <fstream>
@@ -47,6 +48,14 @@
 #include "util/file.h"
 
 static std::atomic_bool cursor_enabled = true;
+static std::atomic_bool any_context_shown = false;
+static std::atomic_bool any_context_captures_input = false;
+static std::atomic_bool any_context_captures_mouse = false;
+
+namespace recompui {
+    void update_shown_context_input_capture(ContextId context, bool captures_input);
+    void update_shown_context_mouse_capture(ContextId context, bool captures_mouse);
+}
 
 void recompui::open_quit_game_prompt() {
     recompui::open_choice_prompt(
@@ -213,11 +222,27 @@ Rml::Element* find_autofocus_element(Rml::Element* start) {
 struct ContextDetails {
     recompui::ContextId context;
     Rml::ElementDocument* document;
+    bool captures_input = true;
+    bool captures_mouse = true;
 };
 
 class UIState {
     bool mouse_is_active_changed = false;
     std::vector<ContextDetails> shown_contexts{};
+
+    void refresh_context_flags() {
+        bool captures_input = false;
+        bool captures_mouse = false;
+        for (const auto& context_details : shown_contexts) {
+            captures_input = captures_input || context_details.captures_input;
+            captures_mouse = captures_mouse || context_details.captures_mouse;
+        }
+
+        any_context_shown.store(!shown_contexts.empty(), std::memory_order_release);
+        any_context_captures_input.store(captures_input, std::memory_order_release);
+        any_context_captures_mouse.store(captures_mouse, std::memory_order_release);
+    }
+
 public:
     bool mouse_is_active_initialized = false;
     bool mouse_is_active = false;
@@ -427,11 +452,19 @@ public:
             recompui::message_box("Attemped to show the same context twice");
             assert(false);
         }
+
+        // Snapshot the current capture flags when the context becomes shown. Any later runtime
+        // changes are kept in sync through ContextId::set_captures_input/set_captures_mouse.
         Rml::ElementDocument* document = context.get_document();
+        bool captures_input = context.captures_input();
+        bool captures_mouse = context.captures_mouse();
         shown_contexts.push_back(ContextDetails{
             .context = context,
-            .document = document
+            .document = document,
+            .captures_input = captures_input,
+            .captures_mouse = captures_mouse
         });
+        refresh_context_flags();
 
         // auto& on_show = context.on_show;
         // if (on_show) {
@@ -445,7 +478,7 @@ public:
 
 #ifdef __ANDROID__
         RECOMPUI_ANDROID_LOG("show_context slot=%" PRIu32 " captures_input=%d captures_mouse=%d shown_count=%zu",
-            context.slot_id, context.captures_input(), context.captures_mouse(), shown_contexts.size());
+            context.slot_id, shown_contexts.back().captures_input, shown_contexts.back().captures_mouse, shown_contexts.size());
 #endif
 
         if (!mouse_is_active) {
@@ -476,14 +509,15 @@ public:
     }
 
     void hide_context(recompui::ContextId context) {
-        auto remove_it = std::remove_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
+        auto remove_it = std::find_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
         if (remove_it == shown_contexts.end()) {
             recompui::message_box("Attemped to hide a context that isn't shown");
             assert(false);
         }
-        shown_contexts.erase(remove_it, shown_contexts.end());
 
-        context.get_document()->Hide();
+        remove_it->document->Hide();
+        shown_contexts.erase(remove_it);
+        refresh_context_flags();
 
 #ifdef __ANDROID__
         RECOMPUI_ANDROID_LOG("hide_context slot=%" PRIu32 " shown_count=%zu", context.slot_id, shown_contexts.size());
@@ -496,6 +530,7 @@ public:
         }
 
         shown_contexts.clear();
+        refresh_context_flags();
     }
 
     bool is_context_shown(recompui::ContextId context) {
@@ -503,11 +538,11 @@ public:
     }
 
     bool is_context_capturing_input() {
-        return std::find_if(shown_contexts.begin(), shown_contexts.end(), [](auto& c){ return c.context.captures_input(); }) != shown_contexts.end();
+        return std::find_if(shown_contexts.begin(), shown_contexts.end(), [](auto& c){ return c.captures_input; }) != shown_contexts.end();
     }
 
     bool is_context_capturing_mouse() {
-        return std::find_if(shown_contexts.begin(), shown_contexts.end(), [](auto& c){ return c.context.captures_mouse(); }) != shown_contexts.end();
+        return std::find_if(shown_contexts.begin(), shown_contexts.end(), [](auto& c){ return c.captures_mouse; }) != shown_contexts.end();
     }
 
     bool is_any_context_shown() {
@@ -523,8 +558,8 @@ public:
             }
             first = false;
             oss << context_details.context.slot_id
-                << ":i" << (context_details.context.captures_input() ? 1 : 0)
-                << ":m" << (context_details.context.captures_mouse() ? 1 : 0);
+                << ":i" << (context_details.captures_input ? 1 : 0)
+                << ":m" << (context_details.captures_mouse ? 1 : 0);
         }
         return oss.str();
     }
@@ -532,7 +567,7 @@ public:
     Rml::ElementDocument* top_input_document() {
         // Iterate backwards and stop at the first context that takes input.
         for (auto it = shown_contexts.rbegin(); it != shown_contexts.rend(); it++) {
-            if (it->context.captures_input()) {
+            if (it->captures_input) {
                 return it->document;
             }
         }
@@ -542,7 +577,7 @@ public:
     Rml::ElementDocument* top_mouse_document() {
         // Iterate backwards and stop at the first context that takes input.
         for (auto it = shown_contexts.rbegin(); it != shown_contexts.rend(); it++) {
-            if (it->context.captures_mouse()) {
+            if (it->captures_mouse) {
                 return it->document;
             }
         }
@@ -552,11 +587,31 @@ public:
     recompui::ContextId top_mouse_context() {
         // Iterate backwards and stop at the first context that takes input.
         for (auto it = shown_contexts.rbegin(); it != shown_contexts.rend(); it++) {
-            if (it->context.captures_mouse()) {
+            if (it->captures_mouse) {
                 return it->context;
             }
         }
         return recompui::ContextId::null();
+    }
+
+    void update_context_input_capture(recompui::ContextId context, bool captures_input) {
+        auto shown_it = std::find_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
+        if (shown_it == shown_contexts.end()) {
+            return;
+        }
+
+        shown_it->captures_input = captures_input;
+        refresh_context_flags();
+    }
+
+    void update_context_mouse_capture(recompui::ContextId context, bool captures_mouse) {
+        auto shown_it = std::find_if(shown_contexts.begin(), shown_contexts.end(), [context](auto& c) { return c.context == context; });
+        if (shown_it == shown_contexts.end()) {
+            return;
+        }
+
+        shown_it->captures_mouse = captures_mouse;
+        refresh_context_flags();
     }
 
     void update_contexts() {
@@ -570,6 +625,24 @@ public:
 
 std::unique_ptr<UIState> ui_state;
 std::recursive_mutex ui_state_mutex{};
+
+void recompui::update_shown_context_input_capture(ContextId context, bool captures_input) {
+    std::lock_guard lock{ ui_state_mutex };
+    if (!ui_state) {
+        return;
+    }
+
+    ui_state->update_context_input_capture(context, captures_input);
+}
+
+void recompui::update_shown_context_mouse_capture(ContextId context, bool captures_mouse) {
+    std::lock_guard lock{ ui_state_mutex };
+    if (!ui_state) {
+        return;
+    }
+
+    ui_state->update_context_mouse_capture(context, captures_mouse);
+}
 
 // TODO make this not be global
 extern SDL_Window* window;
@@ -1093,33 +1166,15 @@ bool recompui::is_context_shown(ContextId context) {
 }
 
 bool recompui::is_context_capturing_input() {
-    std::lock_guard lock{ui_state_mutex};
-
-    if (!ui_state) {
-        return false;
-    }
-
-    return ui_state->is_context_capturing_input();
+    return any_context_captures_input.load(std::memory_order_acquire);
 }
 
 bool recompui::is_context_capturing_mouse() {
-    std::lock_guard lock{ui_state_mutex};
-
-    if (!ui_state) {
-        return false;
-    }
-
-    return ui_state->is_context_capturing_mouse();
+    return any_context_captures_mouse.load(std::memory_order_acquire);
 }
 
 bool recompui::is_any_context_shown() {
-    std::lock_guard lock{ui_state_mutex};
-
-    if (!ui_state) {
-        return false;
-    }
-
-    return ui_state->is_any_context_shown();
+    return any_context_shown.load(std::memory_order_acquire);
 }
 
 Rml::ElementDocument* recompui::load_document(const std::filesystem::path& path) {

@@ -46,6 +46,9 @@ namespace recompui {
         bool captures_mouse = true;
         Context(ResourceId rid, Rml::ElementDocument* document) : document(document), root_element(rid, document) {}
     };
+
+    void update_shown_context_input_capture(ContextId context, bool captures_input);
+    void update_shown_context_mouse_capture(ContextId context, bool captures_mouse);
 } // namespace recompui
 
 using context_slotmap = dod::slot_map32<recompui::Context>;
@@ -513,23 +516,31 @@ bool recompui::ContextId::captures_mouse() {
 }
 
 void recompui::ContextId::set_captures_input(bool captures_input) {
-    std::lock_guard lock{ context_state.all_contexts_lock };
+    {
+        std::lock_guard lock{ context_state.all_contexts_lock };
 
-    Context* ctx = context_state.all_contexts.get(context_slotmap::key{ slot_id });
-    if (ctx == nullptr) {
-        return;
+        Context* ctx = context_state.all_contexts.get(context_slotmap::key{ slot_id });
+        if (ctx == nullptr) {
+            return;
+        }
+        ctx->captures_input = captures_input;
     }
-    ctx->captures_input = captures_input;
+
+    update_shown_context_input_capture(*this, captures_input);
 }
 
 void recompui::ContextId::set_captures_mouse(bool captures_mouse) {
-    std::lock_guard lock{ context_state.all_contexts_lock };
+    {
+        std::lock_guard lock{ context_state.all_contexts_lock };
 
-    Context* ctx = context_state.all_contexts.get(context_slotmap::key{ slot_id });
-    if (ctx == nullptr) {
-        return;
+        Context* ctx = context_state.all_contexts.get(context_slotmap::key{ slot_id });
+        if (ctx == nullptr) {
+            return;
+        }
+        ctx->captures_mouse = captures_mouse;
     }
-    ctx->captures_mouse = captures_mouse;
+
+    update_shown_context_mouse_capture(*this, captures_mouse);
 }
 
 recompui::ResourceId recompui::ContextId::create_resource_impl(bool is_element) {

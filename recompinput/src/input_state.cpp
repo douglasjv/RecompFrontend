@@ -97,29 +97,26 @@ static float smoothstep(float from, float to, float amount) {
 
 // Update rumble to attempt to mimic the way n64 rumble ramps up and falls off
 void recompinput::update_rumble() {
-    auto do_rumble = [](SDL_GameController* controller, uint16_t rumble_strength, uint32_t duration) {
-        SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
-        SDL_JoystickID joystick_id = SDL_JoystickInstanceID(joystick);
-        ControllerState &state = InputState.controller_states[joystick_id];
-
-        // Skip setting rumble for controllers that failed to rumble previously.
-        if (state.rumble_failed) {
-           return;
-        }
-        int err = SDL_JoystickRumble(joystick, 0, rumble_strength, duration);
-        if (err != 0) {
-            state.rumble_failed = true;
-        }
+    struct PendingRumble {
+        SDL_JoystickID joystick_id;
+        SDL_Joystick* joystick;
+        uint16_t strength;
+        uint32_t duration;
     };
 
     // Skip rumble processing if the game doesn't have a rumble strength option. 
     if (!recompui::config::general::has_rumble_strength_option()) {
         return;
     }
+
     size_t rumbles_to_run = recompinput::players::is_single_player_mode() ? 1 : recompinput::players::get_number_of_assigned_players();
     if (rumbles_to_run > InputState.cur_rumble.size()) {
         rumbles_to_run = InputState.cur_rumble.size();
     }
+
+    std::vector<PendingRumble> pending_rumbles{};
+    pending_rumbles.reserve(rumbles_to_run);
+
     for (size_t i = 0; i < rumbles_to_run; i++) {
         // Note: values are not accurate! just approximations based on feel
         if (InputState.rumble_active[i]) {
@@ -138,16 +135,42 @@ void recompinput::update_rumble() {
         {
             std::lock_guard lock{ InputState.controllers_mutex };
             if (recompinput::players::is_single_player_mode()) {
-                for (const auto &controller : InputState.detected_controllers) {
-                    do_rumble(controller, rumble_strength, duration);
+                for (const auto& [joystick_id, state] : InputState.controller_states) {
+                    if (state.joystick == nullptr || state.rumble_failed || state.last_rumble_strength == rumble_strength) {
+                        continue;
+                    }
+
+                    pending_rumbles.push_back({ joystick_id, state.joystick, rumble_strength, duration });
                 }
             }
             else {
                 auto &player = recompinput::players::get_player(i);
-                if (player.controller != nullptr) {
-                    do_rumble(player.controller, rumble_strength, duration);
+                for (const auto& [joystick_id, state] : InputState.controller_states) {
+                    if (state.controller != player.controller || state.joystick == nullptr || state.rumble_failed || state.last_rumble_strength == rumble_strength) {
+                        continue;
+                    }
+
+                    pending_rumbles.push_back({ joystick_id, state.joystick, rumble_strength, duration });
+                    break;
                 }
             }
+        }
+    }
+
+    for (const PendingRumble& pending : pending_rumbles) {
+        int err = SDL_JoystickRumble(pending.joystick, 0, pending.strength, pending.duration);
+
+        std::lock_guard lock{ InputState.controllers_mutex };
+        auto it = InputState.controller_states.find(pending.joystick_id);
+        if (it == InputState.controller_states.end() || it->second.joystick != pending.joystick) {
+            continue;
+        }
+
+        if (err != 0) {
+            it->second.rumble_failed = true;
+        }
+        else {
+            it->second.last_rumble_strength = pending.strength;
         }
     }
 }
@@ -317,15 +340,16 @@ void recompinput::get_gyro_deltas(int controller_num, float* x, float* y) {
         }
 
     } else {
+        std::lock_guard lock{ InputState.controllers_mutex };
         auto &player = players::get_player(controller_num);
-        if (player.controller == nullptr) {
+        if (const ControllerState* state = find_controller_state_locked(player.controller)) {
+            cur_rotation_delta = state->rotation_delta;
+        }
+        else {
             *x = 0.0f;
             *y = 0.0f;
             return;
         }
-        SDL_JoystickID joystick_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(player.controller));
-        ControllerState &state = get_controller_state(joystick_id);
-        cur_rotation_delta = state.rotation_delta;
     }
 
     *x = cur_rotation_delta[0] * sensitivity;
@@ -503,6 +527,7 @@ void recompinput::set_controller_button_value(SDL_JoystickID joystick_id, SDL_Ga
 }
 
 void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller) {
+    SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
     std::array<Sint16, SDL_CONTROLLER_AXIS_MAX> axis_values{};
     std::array<Uint8, SDL_CONTROLLER_BUTTON_MAX> button_values{};
     for (int axis = 0; axis < SDL_CONTROLLER_AXIS_MAX; axis++) {
@@ -515,12 +540,14 @@ void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameContr
     std::lock_guard lock{ InputState.controllers_mutex };
     ControllerState& state = InputState.controller_states[joystick_id];
     state.controller = controller;
+    state.joystick = joystick;
     state.latest_accelerometer = {};
     state.prev_gyro_timestamp = 0;
     state.axis_values = axis_values;
     state.button_values = button_values;
     state.rotation_delta = { 0.0f, 0.0f };
     state.pending_rotation_delta = { 0.0f, 0.0f };
+    state.last_rumble_strength = 0;
     state.rumble_failed = false;
     state.motion.Reset();
     state.motion.SetCalibrationMode(GamepadMotionHelpers::CalibrationMode::Stillness | GamepadMotionHelpers::CalibrationMode::SensorFusion);

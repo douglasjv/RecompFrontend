@@ -15,6 +15,7 @@
 namespace recompinput {
     struct ControllerState {
         SDL_GameController* controller;
+        SDL_Joystick* joystick;
         std::array<float, 3> latest_accelerometer;
         GamepadMotion motion;
         uint32_t prev_gyro_timestamp;
@@ -22,9 +23,10 @@ namespace recompinput {
         std::array<Uint8, SDL_CONTROLLER_BUTTON_MAX> button_values{};
         std::array<float, 2> rotation_delta{};
         std::array<float, 2> pending_rotation_delta{};
+        Uint16 last_rumble_strength;
         bool rumble_failed;
 
-        ControllerState() : controller{}, latest_accelerometer{}, motion{}, prev_gyro_timestamp{}, axis_values{}, button_values{}, rotation_delta{}, pending_rotation_delta{}, rumble_failed{} {
+        ControllerState() : controller{}, joystick{}, latest_accelerometer{}, motion{}, prev_gyro_timestamp{}, axis_values{}, button_values{}, rotation_delta{}, pending_rotation_delta{}, last_rumble_strength{}, rumble_failed{} {
             motion.Reset();
             motion.SetCalibrationMode(GamepadMotionHelpers::CalibrationMode::Stillness | GamepadMotionHelpers::CalibrationMode::SensorFusion);
         };

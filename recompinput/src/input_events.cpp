@@ -167,6 +167,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         RECOMPINPUT_ANDROID_LOG("Filter CONTROLLERBUTTONDOWN which=%" PRIu32 " button=%u",
             event->cbutton.which, event->cbutton.button);
 #endif
+        recompinput::set_controller_button_value(event->cbutton.which, static_cast<SDL_GameControllerButton>(event->cbutton.button), true);
         if (binding::is_binding() && binding::is_controller_being_bound(event->cbutton.which)) {
             // TODO: Needs the controller profile index.
             auto menuToggleBinding0 = profiles::get_input_binding(0, GameInput::TOGGLE_MENU, 0);
@@ -197,6 +198,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         }
         break;
     case SDL_EventType::SDL_CONTROLLERAXISMOTION:
+        recompinput::set_controller_axis_value(event->caxis.which, static_cast<SDL_GameControllerAxis>(event->caxis.axis), event->caxis.value);
         if (binding::is_controller_being_bound(event->caxis.which)) {
             GameInput scanning_game_input = binding::get_scanning_game_input();
             if (scanning_game_input == GameInput::TOGGLE_MENU ||
@@ -296,6 +298,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         break;
     case SDL_EventType::SDL_CONTROLLERBUTTONUP:
         // Always queue button up events to avoid missing them during binding.
+        recompinput::set_controller_button_value(event->cbutton.which, static_cast<SDL_GameControllerButton>(event->cbutton.button), false);
         recompui::queue_event(*event);
         break;
     default:

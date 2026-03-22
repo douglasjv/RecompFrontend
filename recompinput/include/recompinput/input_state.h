@@ -18,11 +18,13 @@ namespace recompinput {
         std::array<float, 3> latest_accelerometer;
         GamepadMotion motion;
         uint32_t prev_gyro_timestamp;
+        std::array<Sint16, SDL_CONTROLLER_AXIS_MAX> axis_values{};
+        std::array<Uint8, SDL_CONTROLLER_BUTTON_MAX> button_values{};
         std::array<float, 2> rotation_delta{};
         std::array<float, 2> pending_rotation_delta{};
         bool rumble_failed;
 
-        ControllerState() : controller{}, latest_accelerometer{}, motion{}, prev_gyro_timestamp{}, rotation_delta{}, pending_rotation_delta{}, rumble_failed{} {
+        ControllerState() : controller{}, latest_accelerometer{}, motion{}, prev_gyro_timestamp{}, axis_values{}, button_values{}, rotation_delta{}, pending_rotation_delta{}, rumble_failed{} {
             motion.Reset();
             motion.SetCalibrationMode(GamepadMotionHelpers::CalibrationMode::Stillness | GamepadMotionHelpers::CalibrationMode::SensorFusion);
         };
@@ -53,6 +55,8 @@ namespace recompinput {
     ControllerState &get_controller_state(SDL_JoystickID joystick_id);
     SDL_GameController *get_controller_from_joystick_id(SDL_JoystickID joystick_id);
     bool has_connected_controllers();
+    void set_controller_axis_value(SDL_JoystickID joystick_id, SDL_GameControllerAxis axis, Sint16 value);
+    void set_controller_button_value(SDL_JoystickID joystick_id, SDL_GameControllerButton button, bool pressed);
     void add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller);
     void remove_controller_state(SDL_JoystickID joystick_id);
     void add_rotation_deltas(SDL_JoystickID joystick_id, float rot_x, float rot_y);

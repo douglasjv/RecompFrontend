@@ -34,6 +34,21 @@ static struct {
     InputArray<bool> rumble_active{};
 } InputState;
 
+static const ControllerState* find_controller_state_locked(SDL_GameController* controller) {
+    if (controller == nullptr) {
+        return nullptr;
+    }
+
+    for (const auto& [joystick_id, state] : InputState.controller_states) {
+        (void)joystick_id;
+        if (state.controller == controller) {
+            return &state;
+        }
+    }
+
+    return nullptr;
+}
+
 void recompinput::poll_inputs() {
     InputState.keys = SDL_GetKeyboardState(&InputState.numkeys);
     InputState.keymod = SDL_GetModState();
@@ -144,14 +159,17 @@ bool controller_button_state(int controller_num, int32_t input_id) {
         {
             std::lock_guard lock{ InputState.controllers_mutex };
             if (recompinput::players::is_single_player_mode()) {
-                for (const auto &controller : InputState.detected_controllers) {
-                    ret |= SDL_GameControllerGetButton(controller, button);
+                for (const auto& [joystick_id, state] : InputState.controller_states) {
+                    (void)joystick_id;
+                    if (state.controller != nullptr) {
+                        ret |= (state.button_values[button] != 0);
+                    }
                 }
             }
             else {
                 auto &player = recompinput::players::get_player(controller_num);
-                if (player.controller != nullptr) {
-                    ret |= SDL_GameControllerGetButton(player.controller, button);
+                if (const ControllerState* state = find_controller_state_locked(player.controller)) {
+                    ret |= (state->button_values[button] != 0);
                 }
             }
         }
@@ -170,8 +188,8 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
         float ret = 0.0f;
 
         {
-            auto gather_axis_state = [&](SDL_GameController* controller) {
-                float cur_val = SDL_GameControllerGetAxis(controller, axis) * (1 / 32768.0f);
+            auto gather_axis_state = [&](const ControllerState& state) {
+                float cur_val = state.axis_values[axis] * (1 / 32768.0f);
                 if (negative_range) {
                     cur_val = -cur_val;
                 }
@@ -187,8 +205,13 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
 
             std::lock_guard lock{ InputState.controllers_mutex };
             if (recompinput::players::is_single_player_mode()) {
-                for (SDL_GameController *controller : InputState.detected_controllers) {
-                    float controller_state = gather_axis_state(controller);
+                for (const auto& [joystick_id, state] : InputState.controller_states) {
+                    (void)joystick_id;
+                    if (state.controller == nullptr) {
+                        continue;
+                    }
+
+                    float controller_state = gather_axis_state(state);
                     if (fabsf(controller_state) > fabsf(ret)) {
                         ret = controller_state;
                     }
@@ -196,8 +219,8 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
             }
             else {
                 auto &player = recompinput::players::get_player(controller_num);
-                if (player.controller != nullptr) {
-                    ret = gather_axis_state(player.controller);
+                if (const ControllerState* state = find_controller_state_locked(player.controller)) {
+                    ret = gather_axis_state(*state);
                 }
             }
         }
@@ -455,10 +478,52 @@ bool recompinput::has_connected_controllers() {
     return false;
 }
 
-void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller) {
+void recompinput::set_controller_axis_value(SDL_JoystickID joystick_id, SDL_GameControllerAxis axis, Sint16 value) {
+    if (axis < 0 || axis >= SDL_GameControllerAxis::SDL_CONTROLLER_AXIS_MAX) {
+        return;
+    }
+
     std::lock_guard lock{ InputState.controllers_mutex };
-    ControllerState& state = InputState.controller_states[SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))];
+    auto it = InputState.controller_states.find(joystick_id);
+    if (it != InputState.controller_states.end()) {
+        it->second.axis_values[axis] = value;
+    }
+}
+
+void recompinput::set_controller_button_value(SDL_JoystickID joystick_id, SDL_GameControllerButton button, bool pressed) {
+    if (button < 0 || button >= SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_MAX) {
+        return;
+    }
+
+    std::lock_guard lock{ InputState.controllers_mutex };
+    auto it = InputState.controller_states.find(joystick_id);
+    if (it != InputState.controller_states.end()) {
+        it->second.button_values[button] = pressed ? SDL_PRESSED : SDL_RELEASED;
+    }
+}
+
+void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller) {
+    std::array<Sint16, SDL_CONTROLLER_AXIS_MAX> axis_values{};
+    std::array<Uint8, SDL_CONTROLLER_BUTTON_MAX> button_values{};
+    for (int axis = 0; axis < SDL_CONTROLLER_AXIS_MAX; axis++) {
+        axis_values[axis] = SDL_GameControllerGetAxis(controller, static_cast<SDL_GameControllerAxis>(axis));
+    }
+    for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; button++) {
+        button_values[button] = SDL_GameControllerGetButton(controller, static_cast<SDL_GameControllerButton>(button));
+    }
+
+    std::lock_guard lock{ InputState.controllers_mutex };
+    ControllerState& state = InputState.controller_states[joystick_id];
     state.controller = controller;
+    state.latest_accelerometer = {};
+    state.prev_gyro_timestamp = 0;
+    state.axis_values = axis_values;
+    state.button_values = button_values;
+    state.rotation_delta = { 0.0f, 0.0f };
+    state.pending_rotation_delta = { 0.0f, 0.0f };
+    state.rumble_failed = false;
+    state.motion.Reset();
+    state.motion.SetCalibrationMode(GamepadMotionHelpers::CalibrationMode::Stillness | GamepadMotionHelpers::CalibrationMode::SensorFusion);
 }
 
 void recompinput::remove_controller_state(SDL_JoystickID joystick_id) {
